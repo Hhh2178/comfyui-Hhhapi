@@ -1,0 +1,9 @@
+hhhapi_secrets.json
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.DS_Store
+.idea/
+.vscode/
+.pytest_cache/

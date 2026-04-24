@@ -1,0 +1,205 @@
+{
+  "schema_version": "1.1-text",
+  "default_provider_id": "openai_compatible",
+  "providers": [
+    {
+      "id": "openai_compatible",
+      "name": "OpenAI Compatible",
+      "enabled": true,
+      "base_urls": [
+        "https://api.openai.com/v1"
+      ],
+      "auth": {
+        "type": "bearer",
+        "header": "Authorization",
+        "prefix": "Bearer "
+      },
+      "profiles": [
+        {
+          "id": "openai_chat",
+          "task_types": [
+            "text"
+          ],
+          "protocol": "openai_chat_completions",
+          "path": "/chat/completions",
+          "method": "POST"
+        }
+      ],
+      "models": [
+        {
+          "id": "gpt-4.1",
+          "name": "gpt-4.1",
+          "task_types": [
+            "text"
+          ],
+          "profile_id": "openai_chat",
+          "capabilities": [
+            "text",
+            "vision_input",
+            "json_object"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek Compatible",
+      "enabled": true,
+      "base_urls": [
+        "https://api.deepseek.com"
+      ],
+      "auth": {
+        "type": "bearer",
+        "header": "Authorization",
+        "prefix": "Bearer "
+      },
+      "profiles": [
+        {
+          "id": "openai_chat",
+          "task_types": [
+            "text"
+          ],
+          "protocol": "openai_chat_completions",
+          "path": "/chat/completions",
+          "method": "POST"
+        }
+      ],
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "name": "deepseek-chat",
+          "task_types": [
+            "text"
+          ],
+          "profile_id": "openai_chat",
+          "capabilities": [
+            "text"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "qwen_compatible",
+      "name": "Qwen Compatible",
+      "enabled": true,
+      "base_urls": [
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      ],
+      "auth": {
+        "type": "bearer",
+        "header": "Authorization",
+        "prefix": "Bearer "
+      },
+      "profiles": [
+        {
+          "id": "openai_chat",
+          "task_types": [
+            "text"
+          ],
+          "protocol": "openai_chat_completions",
+          "path": "/chat/completions",
+          "method": "POST"
+        }
+      ],
+      "models": [
+        {
+          "id": "qwen-plus",
+          "name": "qwen-plus",
+          "task_types": [
+            "text"
+          ],
+          "profile_id": "openai_chat",
+          "capabilities": [
+            "text"
+          ]
+        },
+        {
+          "id": "qwen-vl-plus",
+          "name": "qwen-vl-plus",
+          "task_types": [
+            "text"
+          ],
+          "profile_id": "openai_chat",
+          "capabilities": [
+            "text",
+            "vision_input"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "doubao_compatible",
+      "name": "Doubao Compatible",
+      "enabled": true,
+      "base_urls": [
+        "https://ark.cn-beijing.volces.com/api/v3"
+      ],
+      "auth": {
+        "type": "bearer",
+        "header": "Authorization",
+        "prefix": "Bearer "
+      },
+      "profiles": [
+        {
+          "id": "openai_chat",
+          "task_types": [
+            "text"
+          ],
+          "protocol": "openai_chat_completions",
+          "path": "/chat/completions",
+          "method": "POST"
+        }
+      ],
+      "models": [
+        {
+          "id": "doubao-seed-1-6",
+          "name": "doubao-seed-1-6",
+          "task_types": [
+            "text"
+          ],
+          "profile_id": "openai_chat",
+          "capabilities": [
+            "text"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "zhipu_compatible",
+      "name": "Zhipu Compatible",
+      "enabled": true,
+      "base_urls": [
+        "https://open.bigmodel.cn/api/paas/v4"
+      ],
+      "auth": {
+        "type": "bearer",
+        "header": "Authorization",
+        "prefix": "Bearer "
+      },
+      "profiles": [
+        {
+          "id": "openai_chat",
+          "task_types": [
+            "text"
+          ],
+          "protocol": "openai_chat_completions",
+          "path": "/chat/completions",
+          "method": "POST"
+        }
+      ],
+      "models": [
+        {
+          "id": "glm-4.5",
+          "name": "glm-4.5",
+          "task_types": [
+            "text"
+          ],
+          "profile_id": "openai_chat",
+          "capabilities": [
+            "text"
+          ]
+        }
+      ]
+    }
+  ]
+}
