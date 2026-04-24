@@ -1,6 +1,6 @@
 [project]
 name = "hhhapi"
-version = "0.1.0"
+version = "0.1.1"
 description = "ComfyUI custom nodes for unified text API access with provider management and MiniMax image understanding."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,4 +21,3 @@ dependencies = { file = ["requirements.txt"] }
 PublisherId = "Hhh2178"
 DisplayName = "Hhhapi"
 requires-comfyui = ">=0.3.0"
-

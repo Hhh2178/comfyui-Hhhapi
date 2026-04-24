@@ -30,20 +30,59 @@ function ensureChannelBadge(node) {
         const label = this.__hhhapiChannelLabel;
         if (!label || this.flags?.collapsed) return;
         ctx.save();
-        ctx.font = "12px sans-serif";
-        const paddingX = 8;
+        ctx.font = "11px sans-serif";
+        const paddingX = 7;
         const textWidth = ctx.measureText(label).width;
         const boxWidth = textWidth + 14;
-        const x = Math.max(8, (this.size?.[0] || 220) - boxWidth - 12);
-        const y = 28;
-        ctx.fillStyle = "rgba(32, 32, 32, 0.88)";
-        ctx.fillRect(x, y - 12, boxWidth, 18);
-        ctx.strokeStyle = "rgba(120, 120, 120, 0.8)";
-        ctx.strokeRect(x, y - 12, boxWidth, 18);
+        const x = Math.min(98, Math.max(8, (this.size?.[0] || 220) - boxWidth - 40));
+        const y = 8;
+        ctx.fillStyle = "rgba(34, 34, 34, 0.92)";
+        ctx.fillRect(x, y - 9, boxWidth, 16);
+        ctx.strokeStyle = "rgba(120, 120, 120, 0.65)";
+        ctx.strokeRect(x, y - 9, boxWidth, 16);
         ctx.fillStyle = label.includes("识图") ? "#7dd3fc" : label.includes("视觉") ? "#c4b5fd" : "#cbd5e1";
-        ctx.fillText(label, x + paddingX, y + 1);
+        ctx.fillText(label, x + paddingX, y + 2);
         ctx.restore();
     };
+}
+
+function normalizeLegacyVisualModeWidgets(node, widgets) {
+    const visualMode = widgets["视觉结果模式"];
+    const temperature = widgets["温度"];
+    const maxTokens = widgets["最大Token数"];
+    const seed = widgets["随机种子"];
+    const responseFormat = widgets["响应格式"];
+    const timeout = widgets["超时秒数"];
+    if (!visualMode || !temperature || !maxTokens || !seed || !responseFormat || !timeout) return;
+
+    const visualOptions = visualMode.options?.values || [];
+    const responseOptions = responseFormat.options?.values || [];
+    const visualValid = visualOptions.includes(visualMode.value);
+    const responseValid = responseOptions.includes(responseFormat.value);
+    const legacyShifted = !visualValid
+        && typeof visualMode.value === "number"
+        && typeof temperature.value === "number"
+        && typeof maxTokens.value === "number"
+        && !responseValid
+        && typeof responseFormat.value === "number";
+
+    if (!legacyShifted) return;
+
+    const oldVisualMode = visualMode.value;
+    const oldTemperature = temperature.value;
+    const oldMaxTokens = maxTokens.value;
+    const oldResponseFormat = responseFormat.value;
+
+    visualMode.value = "自动";
+    temperature.value = Number.isFinite(oldVisualMode) ? oldVisualMode : 0.7;
+    maxTokens.value = Number.isFinite(oldTemperature) ? Math.max(1, Math.trunc(oldTemperature)) : 50000;
+    seed.value = Number.isFinite(oldMaxTokens) ? Math.trunc(oldMaxTokens) : -1;
+    responseFormat.value = "文本";
+    timeout.value = Number.isFinite(oldResponseFormat) ? Math.max(1, Math.trunc(oldResponseFormat)) : 120;
+
+    node.properties = node.properties || {};
+    node.properties.hhhapi_visual_mode_fixed = true;
+    console.warn("[Hhhapi] 已自动修正旧版节点的视觉模式参数错位。");
 }
 
 function bindPromptPersistence(node, systemWidget, userWidget) {
@@ -98,7 +137,9 @@ app.registerExtension({
         const model = w["模型"];
         const systemPrompt = w["系统提示词"];
         const userPrompt = w["用户提示词"];
+        const visualMode = w["视觉结果模式"];
         if (!provider || !model) return;
+        normalizeLegacyVisualModeWidgets(node, w);
         ensureChannelBadge(node);
         if (systemPrompt && userPrompt) bindPromptPersistence(node, systemPrompt, userPrompt);
 
@@ -116,8 +157,11 @@ app.registerExtension({
                 const models = detail?.provider?.models || [];
                 const current = models.find(x => x.id === modelId || x.name === modelId) || {};
                 const caps = new Set(current.capabilities || []);
+                const selectedVisualMode = visualMode?.value || "自动";
                 if (hasImage && caps.has("minimax_understand_image")) {
-                    node.__hhhapiChannelLabel = "MiniMax识图通道";
+                    node.__hhhapiChannelLabel = (selectedVisualMode === "二段式整理输出" || selectedVisualMode === "自动")
+                        ? "MiniMax二段式通道"
+                        : "MiniMax识图通道";
                 } else if (hasImage) {
                     node.__hhhapiChannelLabel = "视觉文本通道";
                 } else {
@@ -169,6 +213,14 @@ app.registerExtension({
             if (oldModelCallback) oldModelCallback.call(this, value);
             updateChannelBadge();
         };
+
+        if (visualMode) {
+            const oldVisualModeCallback = visualMode.callback;
+            visualMode.callback = function(value) {
+                if (oldVisualModeCallback) oldVisualModeCallback.call(this, value);
+                updateChannelBadge();
+            };
+        }
 
         const oldConnectionsChange = node.onConnectionsChange;
         node.onConnectionsChange = function(...args) {
