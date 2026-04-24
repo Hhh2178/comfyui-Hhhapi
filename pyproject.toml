@@ -1,7 +1,7 @@
 [project]
 name = "hhhapi"
-version = "0.1.1"
-description = "ComfyUI custom nodes for unified text API access with provider management and MiniMax image understanding."
+version = "0.1.2"
+description = "ComfyUI custom nodes for unified text API access plus bltcy GPT/Nano image nodes with management panels."
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ["dependencies"]
