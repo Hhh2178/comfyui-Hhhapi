@@ -7,11 +7,39 @@
 - 供应商级 API Key 保存与前端掩码
 - 服务商、接口地址、模型的新增、修改、删除
 - 独立前端管理面板
+- MiniMax 图片理解通道
+- 思考链独立输出
+- 繁忙错误自动重试（最多 3 次）
+
+仓库地址：
+
+- [GitHub](https://github.com/Hhh2178/comfyui-Hhhapi)
 
 ## 节点
 
 - `Hhh 文本API`
 - `Hhh 文本API服务商管理`
+
+## 安装
+
+### 方式 1：手动安装
+
+将仓库克隆到 ComfyUI 的 `custom_nodes` 目录：
+
+```bash
+git clone https://github.com/Hhh2178/comfyui-Hhhapi.git
+```
+
+如果你的 ComfyUI Python 环境没有安装依赖，再执行：
+
+```bash
+pip install -r requirements.txt
+```
+
+### 方式 2：通过 ComfyUI Manager
+
+当前仓库已经补齐面向 Registry/Manager 的元信息。  
+如果后续提交到 ComfyUI Manager 列表或发布到 Comfy Registry，就可以直接在 Manager 中检索安装。
 
 ## 基础使用
 
@@ -48,6 +76,13 @@
 | `文本` | 模型返回的主要文本。 |
 | `响应JSON` | 归一化响应和原始响应。 |
 | `用量JSON` | token 用量，如果服务商返回 usage。 |
+| `思考链` | 模型的 reasoning / think 内容。没有思考链时为空字符串。 |
+
+节点右上角会显示当前实际调用通道：
+
+- `文本通道`
+- `视觉文本通道`
+- `MiniMax识图通道`
 
 ## Hhh 文本API服务商管理
 
@@ -69,6 +104,13 @@
 - 新增/删除模型
 - 删除服务商
 
+模型能力配置支持：
+
+- `视觉`
+- `JSON`
+- `思考链`
+- `MiniMax识图`
+
 密钥只会保存到 `hhhapi_secrets.json`，不会写入 `hhhapi_config.json`。
 
 建议：
@@ -80,16 +122,34 @@
 
 ## 当前运行方式
 
-- 管理面板优先使用 `/api/hhhapi/v1/...` 兼容接口，适配当前热加载插件只稳定代理 GET 的行为。
-- 已验证服务商新增、读取、删除可以通过该兼容接口完成。
+- 管理面板当前优先使用 `/api/hhhapi/panel/...` 独立接口，避开部分热更新环境下旧路由残留的问题。
+- 文本节点前端仍使用 `/api/hhhapi/v1/...` 获取服务商和模型列表。
 - `测试连接` 会使用已保存的 API 密钥，对选中服务商和第一个模型发起一次短文本请求。
+
+## MiniMax 图片理解
+
+MiniMax 接入时分成两类：
+
+- 不接图片：走普通文本聊天通道
+- 接入图片且模型能力包含 `MiniMax识图`：自动切换到 MiniMax 官方图片理解通道
+
+这样可以避免把 MiniMax 的图片理解错误地塞进普通 OpenAI 兼容图片输入协议。
+
+如果遇到下列繁忙类错误，节点会自动重试，最多 3 次：
+
+- `429`
+- `529`
+- `rate limit`
+- `服务繁忙`
+- `访问繁忙`
+- `稍后重试`
 
 ## 当前已知问题
 
 - 你当前这台 ComfyUI 的 `comfyui_lg_hotreload` 插件正在高频热更新很多节点，并在日志中出现 `dictionary changed size during iteration`。
 - 这会导致 `Hhhapi` 的 Python 路由偶尔只热加载一部分，出现前端 JS 已更新、但 `/hhhapi/providers` 和 `/hhhapi/models` 仍然跑旧逻辑的情况。
-- 已通过 `/api/hhhapi/v1/...` 兼容接口绕过这个问题。
-- 后续空闲时仍建议做一次 ComfyUI 进程级重载，让标准 `/hhhapi/...` 路由整包重新注册。
+- 已通过独立面板接口和兼容接口组合方式绕过这个问题。
+- 如果个别旧节点仍表现异常，通常刷新前端并重新创建节点即可恢复。
 
 ## 当前设计原则
 
