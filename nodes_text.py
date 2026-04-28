@@ -4,6 +4,7 @@ import time
 from . import provider_store
 from .adapters import get_adapter
 from .secret_store import resolve_api_key
+from .utils.errors import EmptyTextOutputError
 from .utils.response import dumps, error_payload
 
 
@@ -20,14 +21,22 @@ def _channel_label(adapter_protocol, has_image, visual_mode="自动"):
 def _should_retry_text_error(exc):
     text = str(exc or "").lower()
     retry_markers = (
+        "http 500",
         "http 429",
         "http 529",
+        "do_request_failed",
+        "upstream error",
         "rate limit",
         "too many requests",
         "overloaded",
         "server is busy",
         "service unavailable",
         "temporarily unavailable",
+        "timed out",
+        "timeout",
+        "connection reset",
+        "connection aborted",
+        "bad gateway",
         "访问繁忙",
         "请求过多",
         "服务繁忙",
@@ -35,6 +44,19 @@ def _should_retry_text_error(exc):
         "超载",
     )
     return any(marker in text for marker in retry_markers)
+
+
+def _should_failover_on_empty_text_error(exc):
+    if isinstance(exc, EmptyTextOutputError):
+        return True
+    text = str(exc or "").lower()
+    empty_markers = (
+        "api returned no choices",
+        "api returned choices but no text content",
+        "minimax 识图阶段没有返回可用的视觉事实",
+        "文本节点最终输出为空",
+    )
+    return any(marker in text for marker in empty_markers)
 
 
 def _build_minimax_direct_prompt(system_prompt, user_prompt):
@@ -73,7 +95,7 @@ def _build_stage2_prompt(vision_facts, user_prompt):
 
 
 def _call_with_retry(adapter, config, api_key, system_prompt, prompt, temperature, max_tokens, seed, response_format, ref_image=None):
-    max_attempts = 3
+    max_attempts = 4
     attempt = 0
     while attempt < max_attempts:
         attempt += 1
@@ -93,7 +115,7 @@ def _call_with_retry(adapter, config, api_key, system_prompt, prompt, temperatur
         except Exception as exc:
             if attempt >= max_attempts or not _should_retry_text_error(exc):
                 raise
-            time.sleep(min(1.5 * attempt, 4.0))
+            time.sleep(min(1.8 * attempt, 6.0))
 
 
 class HhhapiText:
@@ -102,6 +124,10 @@ class HhhapiText:
         providers = provider_store.provider_ids("text")
         provider_id = providers[0]
         models = provider_store.model_names(provider_id=provider_id, task_type="text")
+        fallback_provider_id = providers[1] if len(providers) > 1 else provider_id
+        fallback_provider_models = provider_store.model_names(provider_id=fallback_provider_id, task_type="text")
+        fallback_providers = [""] + providers
+        fallback_models = [""] + fallback_provider_models
         return {
             "required": {
                 "服务商": (providers, {"default": provider_id}),
@@ -114,6 +140,8 @@ class HhhapiText:
                 "响应格式": (["文本", "JSON对象"], {"default": "文本"}),
                 "超时秒数": ("INT", {"default": 120, "min": 1, "max": 3600, "step": 1}),
                 "视觉结果模式": (["自动", "直接识图输出", "二段式整理输出"], {"default": "自动"}),
+                "输出为空时替代服务商": (fallback_providers, {"default": fallback_provider_id}),
+                "输出为空时替代模型": (fallback_models, {"default": fallback_provider_models[0] if fallback_provider_models else ""}),
             },
             "optional": {
                 "参考图片": ("IMAGE",),
@@ -133,37 +161,57 @@ class HhhapiText:
     def IS_CHANGED(cls, **kwargs):
         return float("NaN")
 
-    def run(self, 服务商="", 模型="", 系统提示词="", 用户提示词="", 视觉结果模式="自动", 温度=0.7, 最大Token数=50000, 随机种子=-1, 响应格式="文本", 超时秒数=120, 参考图片=None):
+    def run(
+        self,
+        服务商="",
+        模型="",
+        系统提示词="",
+        用户提示词="",
+        视觉结果模式="自动",
+        温度=0.7,
+        最大Token数=50000,
+        随机种子=-1,
+        响应格式="文本",
+        超时秒数=120,
+        输出为空时替代服务商="",
+        输出为空时替代模型="",
+        失败重试次数=0,
+        失败时替代服务商="",
+        失败时替代模型="",
+        参考图片=None,
+    ):
         parsed = {}
         adapter_protocol = ""
         effective_visual_mode = 视觉结果模式 or "自动"
-        try:
-            parsed = provider_store.build_text_runtime_config(服务商, 模型, 超时秒数)
-            if parsed.get("task_type") != "text":
+
+        def execute(selected_provider, selected_model):
+            local_parsed = provider_store.build_text_runtime_config(selected_provider, selected_model, 超时秒数)
+            if local_parsed.get("task_type") != "text":
                 raise ValueError("Provider task_type must be text")
-            if 参考图片 is not None and "vision_input" not in parsed.get("capabilities", []):
+            if 参考图片 is not None and "vision_input" not in local_parsed.get("capabilities", []):
                 raise ValueError(
-                    f"当前模型不支持参考图片输入: provider={parsed.get('provider_id', '')}, model={parsed.get('model', '')}. "
+                    f"当前模型不支持参考图片输入: provider={local_parsed.get('provider_id', '')}, model={local_parsed.get('model', '')}. "
                     "请为该模型关闭参考图片，或为支持视觉输入的模型开启 vision_input 能力。"
                 )
-            api_key = resolve_api_key(parsed)
+            api_key = resolve_api_key(local_parsed)
             if not api_key:
                 raise ValueError("API key not found. Set it in Hhh 文本API服务商管理.")
-            adapter_protocol = parsed.get("protocol", "")
-            if 参考图片 is not None and "minimax_understand_image" in parsed.get("capabilities", []):
-                adapter_protocol = "minimax_cli_vision"
-            adapter = get_adapter(adapter_protocol)
+            local_adapter_protocol = local_parsed.get("protocol", "")
+            if 参考图片 is not None and "minimax_understand_image" in local_parsed.get("capabilities", []):
+                local_adapter_protocol = "minimax_cli_vision"
+            adapter = get_adapter(local_adapter_protocol)
             response_format = "json_object" if 响应格式 == "JSON对象" else "text"
 
-            if adapter_protocol == "minimax_cli_vision":
-                if effective_visual_mode == "自动":
-                    effective_visual_mode = "二段式整理输出"
+            if local_adapter_protocol == "minimax_cli_vision":
+                local_visual_mode = effective_visual_mode
+                if local_visual_mode == "自动":
+                    local_visual_mode = "二段式整理输出"
 
-                if effective_visual_mode == "直接识图输出":
+                if local_visual_mode == "直接识图输出":
                     direct_prompt = _build_minimax_direct_prompt(系统提示词, 用户提示词)
                     result, attempts = _call_with_retry(
                         adapter,
-                        parsed,
+                        local_parsed,
                         api_key,
                         "",
                         direct_prompt,
@@ -173,21 +221,19 @@ class HhhapiText:
                         response_format,
                         ref_image=参考图片,
                     )
-                    result["channel"] = adapter_protocol
-                    result["channel_label"] = _channel_label(adapter_protocol, True, effective_visual_mode)
-                    result["visual_mode"] = effective_visual_mode
+                    result["channel"] = local_adapter_protocol
+                    result["channel_label"] = _channel_label(local_adapter_protocol, True, local_visual_mode)
+                    result["visual_mode"] = local_visual_mode
+                    result["model_label"] = local_parsed.get("model_label", local_parsed.get("requested_model", local_parsed.get("model", "")))
                     result["attempts"] = attempts
-                    return (
-                        result.get("text", ""),
-                        dumps(result),
-                        dumps(result.get("usage", {})),
-                        result.get("reasoning", ""),
-                    )
+                    if not (result.get("text", "") or "").strip():
+                        raise EmptyTextOutputError("API returned choices but no text content.")
+                    return local_parsed, local_adapter_protocol, local_visual_mode, result
 
                 vision_prompt = _build_vision_extraction_prompt(用户提示词)
                 stage1_result, stage1_attempts = _call_with_retry(
                     adapter,
-                    parsed,
+                    local_parsed,
                     api_key,
                     "",
                     vision_prompt,
@@ -199,13 +245,13 @@ class HhhapiText:
                 )
                 vision_facts = stage1_result.get("text", "").strip()
                 if not vision_facts:
-                    raise RuntimeError("MiniMax 识图阶段没有返回可用的视觉事实。")
+                    raise EmptyTextOutputError("MiniMax 识图阶段没有返回可用的视觉事实。")
 
-                text_adapter = get_adapter(parsed.get("protocol", ""))
+                text_adapter = get_adapter(local_parsed.get("protocol", ""))
                 stage2_prompt = _build_stage2_prompt(vision_facts, 用户提示词)
                 stage2_result, stage2_attempts = _call_with_retry(
                     text_adapter,
-                    parsed,
+                    local_parsed,
                     api_key,
                     系统提示词,
                     stage2_prompt,
@@ -221,9 +267,10 @@ class HhhapiText:
                 }
                 merged_result = {
                     **stage2_result,
-                    "channel": adapter_protocol,
-                    "channel_label": _channel_label(adapter_protocol, True, effective_visual_mode),
-                    "visual_mode": effective_visual_mode,
+                    "channel": local_adapter_protocol,
+                    "channel_label": _channel_label(local_adapter_protocol, True, local_visual_mode),
+                    "visual_mode": local_visual_mode,
+                    "model_label": local_parsed.get("model_label", local_parsed.get("requested_model", local_parsed.get("model", ""))),
                     "attempts": {
                         "stage1": stage1_attempts,
                         "stage2": stage2_attempts,
@@ -235,16 +282,13 @@ class HhhapiText:
                         "stage2": stage2_result.get("raw", {}),
                     },
                 }
-                return (
-                    merged_result.get("text", ""),
-                    dumps(merged_result),
-                    dumps(merged_usage),
-                    merged_result.get("reasoning", ""),
-                )
+                if not (merged_result.get("text", "") or "").strip():
+                    raise EmptyTextOutputError("API returned choices but no text content.")
+                return local_parsed, local_adapter_protocol, local_visual_mode, merged_result
 
             result, attempts = _call_with_retry(
                 adapter,
-                parsed,
+                local_parsed,
                 api_key,
                 系统提示词,
                 用户提示词,
@@ -254,10 +298,59 @@ class HhhapiText:
                 response_format,
                 ref_image=参考图片,
             )
-            result["channel"] = adapter_protocol
-            result["channel_label"] = _channel_label(adapter_protocol, 参考图片 is not None, effective_visual_mode)
+            result["channel"] = local_adapter_protocol
+            result["channel_label"] = _channel_label(local_adapter_protocol, 参考图片 is not None, effective_visual_mode)
             result["visual_mode"] = effective_visual_mode
+            result["model_label"] = local_parsed.get("model_label", local_parsed.get("requested_model", local_parsed.get("model", "")))
             result["attempts"] = attempts
+            if not (result.get("text", "") or "").strip():
+                raise EmptyTextOutputError("API returned choices but no text content.")
+            return local_parsed, local_adapter_protocol, effective_visual_mode, result
+
+        def run_with_outer_retry(selected_provider, selected_model, attempt_count):
+            last_exc = None
+            total_attempts = max(1, int(attempt_count or 0) + 1)
+            for _ in range(total_attempts):
+                try:
+                    return execute(selected_provider, selected_model)
+                except Exception as exc:
+                    last_exc = exc
+            raise last_exc
+
+        try:
+            retry_count = max(0, int(失败重试次数 or 0))
+            fallback_provider = (输出为空时替代服务商 or 失败时替代服务商 or "").strip()
+            fallback_model = (输出为空时替代模型 or 失败时替代模型 or "").strip()
+            failover = {}
+            try:
+                parsed, adapter_protocol, effective_visual_mode, result = run_with_outer_retry(服务商, 模型, retry_count)
+            except Exception as primary_exc:
+                parsed = provider_store.build_text_runtime_config(服务商, 模型, 超时秒数)
+                fallback_provider = fallback_provider or 服务商
+                if (
+                    not fallback_model
+                    or (fallback_provider == 服务商 and fallback_model == 模型)
+                    or not _should_failover_on_empty_text_error(primary_exc)
+                ):
+                    raise
+                failover = {
+                    "attempted": True,
+                    "primary_provider": 服务商,
+                    "primary_model": parsed.get("model", 模型),
+                    "primary_model_label": parsed.get("model_label", 模型),
+                    "fallback_provider": fallback_provider,
+                    "fallback_model_label": fallback_model,
+                    "primary_error": str(primary_exc),
+                    "retry_count": retry_count,
+                }
+                parsed, adapter_protocol, effective_visual_mode, result = run_with_outer_retry(fallback_provider, fallback_model, retry_count)
+                failover["used"] = True
+                failover["resolved_fallback_provider"] = parsed.get("provider_id", fallback_provider)
+                failover["fallback_model"] = parsed.get("model", fallback_model)
+                failover["resolved_fallback_model_label"] = parsed.get("model_label", fallback_model)
+            if not (result.get("text", "") or "").strip():
+                raise EmptyTextOutputError("文本节点最终输出为空。")
+            result["failover"] = failover
             return (
                 result.get("text", ""),
                 dumps(result),
@@ -270,4 +363,7 @@ class HhhapiText:
                 error["channel"] = adapter_protocol
                 error["channel_label"] = _channel_label(adapter_protocol, 参考图片 is not None, effective_visual_mode)
             error["visual_mode"] = effective_visual_mode
+            error["exception_type"] = type(exc).__name__
+            if _should_failover_on_empty_text_error(exc):
+                raise RuntimeError(error["message"])
             return ("", dumps(error), "{}", "")

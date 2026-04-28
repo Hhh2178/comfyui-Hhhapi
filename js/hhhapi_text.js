@@ -14,6 +14,13 @@ function byName(node) {
     return out;
 }
 
+function firstWidget(widgets, names) {
+    for (const name of names) {
+        if (widgets[name]) return widgets[name];
+    }
+    return null;
+}
+
 function getInputLinked(node, name) {
     const input = (node.inputs || []).find(x => x.name === name);
     return !!input?.link;
@@ -135,6 +142,8 @@ app.registerExtension({
         const w = byName(node);
         const provider = w["服务商"];
         const model = w["模型"];
+        const fallbackProvider = firstWidget(w, ["输出为空时替代服务商", "失败时替代服务商"]);
+        const fallbackModel = firstWidget(w, ["输出为空时替代模型", "失败时替代模型"]);
         const systemPrompt = w["系统提示词"];
         const userPrompt = w["用户提示词"];
         const visualMode = w["视觉结果模式"];
@@ -155,7 +164,7 @@ app.registerExtension({
                 }
                 const detail = await fetchJson(`${API_BASE}/provider?provider_id=${encodeURIComponent(providerId)}`);
                 const models = detail?.provider?.models || [];
-                const current = models.find(x => x.id === modelId || x.name === modelId) || {};
+                const current = models.find(x => x.id === modelId || x.name === modelId || x.label === modelId) || {};
                 const caps = new Set(current.capabilities || []);
                 const selectedVisualMode = visualMode?.value || "自动";
                 if (hasImage && caps.has("minimax_understand_image")) {
@@ -179,16 +188,49 @@ app.registerExtension({
             if (ids.length) {
                 provider.options.values = ids;
                 if (!ids.includes(provider.value)) provider.value = ids[0];
+                if (fallbackProvider) {
+                    const fallbackProviderChoices = ["", ...ids];
+                    const preferredFallback = ids.find(id => id !== provider.value) || ids[0] || "";
+                    const shouldRepair = !fallbackProvider.value || !fallbackProviderChoices.includes(fallbackProvider.value);
+                    fallbackProvider.options.values = fallbackProviderChoices;
+                    if (shouldRepair) fallbackProvider.value = preferredFallback;
+                }
             }
         }
 
         async function refreshModels() {
             const models = await fetchJson(`${API_BASE}/models?provider_id=${encodeURIComponent(provider.value || "")}`);
-            if (Array.isArray(models) && models.length) {
-                model.options.values = models;
-                if (!models.includes(model.value)) model.value = models[0];
+            const safeModels = Array.isArray(models) ? models.filter(Boolean) : [];
+            if (safeModels.length) {
+                const previousPrimary = model.value;
+                model.options.values = safeModels;
+                if (!safeModels.includes(model.value)) model.value = safeModels[0];
+                if (fallbackProvider && fallbackModel && fallbackProvider.value === provider.value && (!fallbackModel.value || fallbackModel.value === previousPrimary)) {
+                    fallbackModel.options.values = ["", ...safeModels];
+                    fallbackModel.value = model.value;
+                }
+            } else {
+                model.options.values = [""];
+                model.value = "";
             }
             await updateChannelBadge();
+            app.graph.setDirtyCanvas(true);
+        }
+
+        async function refreshFallbackModels() {
+            if (!fallbackModel) return;
+            const targetProvider = fallbackProvider?.value || "";
+            if (!targetProvider) {
+                fallbackModel.options.values = [""];
+                fallbackModel.value = "";
+                app.graph.setDirtyCanvas(true);
+                return;
+            }
+            const models = await fetchJson(`${API_BASE}/models?provider_id=${encodeURIComponent(targetProvider)}`);
+            const safeModels = Array.isArray(models) ? models.filter(Boolean) : [];
+            const fallbackChoices = ["", ...safeModels];
+            fallbackModel.options.values = fallbackChoices;
+            if (!fallbackChoices.includes(fallbackModel.value)) fallbackModel.value = safeModels[0] || "";
             app.graph.setDirtyCanvas(true);
         }
 
@@ -196,6 +238,7 @@ app.registerExtension({
             try {
                 await refreshProviders();
                 await refreshModels();
+                await refreshFallbackModels();
                 await updateChannelBadge();
             } catch (err) {
                 console.warn("[Hhhapi]", err);
@@ -205,12 +248,30 @@ app.registerExtension({
         const oldProviderCallback = provider.callback;
         provider.callback = function(value) {
             if (oldProviderCallback) oldProviderCallback.call(this, value);
+            if (fallbackProvider && (!fallbackProvider.value || fallbackProvider.value === value)) {
+                const ids = (provider.options?.values || []).filter(Boolean);
+                fallbackProvider.value = ids.find(id => id !== value) || value || "";
+            }
             refreshModels();
+            refreshFallbackModels();
         };
+
+        if (fallbackProvider) {
+            const oldFallbackProviderCallback = fallbackProvider.callback;
+            fallbackProvider.callback = function(value) {
+                fallbackProvider.value = value;
+                if (oldFallbackProviderCallback) oldFallbackProviderCallback.call(this, value);
+                fallbackProvider.value = value;
+                refreshFallbackModels();
+            };
+        }
 
         const oldModelCallback = model.callback;
         model.callback = function(value) {
             if (oldModelCallback) oldModelCallback.call(this, value);
+            if (fallbackProvider && fallbackModel && fallbackProvider.value === provider.value && (!fallbackModel.value || fallbackModel.value === value)) {
+                fallbackModel.value = value;
+            }
             updateChannelBadge();
         };
 

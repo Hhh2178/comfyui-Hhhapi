@@ -171,6 +171,39 @@ DEFAULT_CONFIG = {
 }
 
 
+def _clean_text(value):
+    return str(value or "").strip()
+
+
+def _model_actual_name(model):
+    if not isinstance(model, dict):
+        return ""
+    return _clean_text(model.get("name") or model.get("id"))
+
+
+def _model_display_name(model):
+    if not isinstance(model, dict):
+        return ""
+    return _clean_text(model.get("label") or model.get("display_name") or model.get("alias") or _model_actual_name(model))
+
+
+def _normalize_model(model):
+    if not isinstance(model, dict):
+        return None
+    actual_name = _model_actual_name(model)
+    if not actual_name:
+        return None
+    normalized = copy.deepcopy(model)
+    normalized["id"] = _clean_text(normalized.get("id") or actual_name)
+    normalized["name"] = actual_name
+    label = _model_display_name(normalized)
+    if label:
+        normalized["label"] = label
+    elif "label" in normalized:
+        normalized.pop("label", None)
+    return normalized
+
+
 def default_text_profile(path="/chat/completions"):
     return {
         "id": TEXT_PROFILE_ID,
@@ -225,7 +258,8 @@ def migrate_text_only_config(config):
         profile_ids_set = {p.get("id") for p in profiles}
         models = []
         for model in provider.get("models", []):
-            if not isinstance(model, dict):
+            model = _normalize_model(model)
+            if not model:
                 continue
             if "text" not in model.get("task_types", []):
                 continue
@@ -314,7 +348,7 @@ def model_names(provider_id=None, task_type=None, profile_id=None):
                 continue
             if profile_id and model.get("profile_id") != profile_id:
                 continue
-            name = model.get("name") or model.get("id")
+            name = _model_display_name(model)
             if name and name not in out:
                 out.append(name)
     return out or [""]
@@ -325,8 +359,9 @@ def get_model(provider_id, model_name):
     if not provider:
         return None
     for model in provider.get("models", []):
-        name = model.get("name") or model.get("id")
-        if name == model_name or model.get("id") == model_name:
+        actual_name = _model_actual_name(model)
+        display_name = _model_display_name(model)
+        if model_name in {display_name, actual_name, _clean_text(model.get("id"))}:
             return model
     return None
 
@@ -354,6 +389,13 @@ def build_runtime_config(task_type, provider_id, profile_id, base_url, model, no
     profile = get_profile(provider, profile_id, task_type)
     if not profile:
         raise ValueError(f"profile not found: {profile_id}")
+    resolved_model = model
+    model_label = model
+    if task_type == "text":
+        model_info = get_model(provider_id, model)
+        if model_info:
+            resolved_model = _model_actual_name(model_info)
+            model_label = _model_display_name(model_info)
 
     paths = {}
     if profile.get("path"):
@@ -371,7 +413,9 @@ def build_runtime_config(task_type, provider_id, profile_id, base_url, model, no
         "profile_id": profile.get("id", ""),
         "protocol": profile.get("protocol", ""),
         "base_url": (base_url or "").strip().rstrip("/"),
-        "model": model,
+        "model": resolved_model,
+        "model_label": model_label,
+        "requested_model": model,
         "api_key_ref": {"scope": "node", "node_id": str(node_id or "")},
         "auth": provider.get("auth", {}),
         "paths": paths,
@@ -402,9 +446,11 @@ def build_text_runtime_config(provider_id, model, timeout=120):
         "profile_id": profile.get("id", ""),
         "protocol": profile.get("protocol", ""),
         "base_url": (base_url or "").strip().rstrip("/"),
-        "model": model,
+        "model": _model_actual_name(model_info),
         "model_id": model_info.get("id", ""),
-        "model_name": model_info.get("name", "") or model_info.get("id", ""),
+        "model_name": _model_actual_name(model_info),
+        "model_label": _model_display_name(model_info),
+        "requested_model": model,
         "capabilities": list(model_info.get("capabilities", [])),
         "api_key_ref": {"scope": "provider", "provider_id": provider.get("id", "")},
         "auth": provider.get("auth", {}),
@@ -485,6 +531,7 @@ def make_text_provider(provider_id, name, base_url, model_name, api_path="/chat/
             {
                 "id": model_name,
                 "name": model_name,
+                "label": model_name,
                 "task_types": ["text"],
                 "profile_id": TEXT_PROFILE_ID,
                 "capabilities": ["text"],
@@ -494,7 +541,8 @@ def make_text_provider(provider_id, name, base_url, model_name, api_path="/chat/
 
 
 def upsert_model(provider_id, model):
-    if not isinstance(model, dict) or not model.get("id"):
+    model = _normalize_model(model)
+    if not model or not model.get("id"):
         raise ValueError("model.id is required")
     config = load_config()
     for provider in config.get("providers", []):

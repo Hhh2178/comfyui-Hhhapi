@@ -39,25 +39,31 @@ function cssOnce() {
         .hhhapi-close,.hhhapi-btn{background:#3a3a3a;color:#eee;border:1px solid #666;border-radius:6px;padding:6px 10px;cursor:pointer}
         .hhhapi-close:hover,.hhhapi-btn:hover{background:#4a4a4a}
         .hhhapi-primary{border-color:#4d7fa8;background:#28506d}
-        .hhhapi-body{padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+        .hhhapi-body{padding:14px;display:grid;grid-template-columns:220px 1fr;gap:14px}
         .hhhapi-form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         .hhhapi-field{display:flex;flex-direction:column;gap:5px}
         .hhhapi-field input,.hhhapi-field textarea{background:#191919;color:#eee;border:1px solid #555;border-radius:5px;padding:7px}
         .hhhapi-panel{border:1px solid #444;border-radius:6px;padding:12px;background:#222}
         .hhhapi-panel-title{font-weight:700;margin-bottom:10px}
-        .hhhapi-model-row{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:8px;margin-bottom:8px;align-items:center}
+        .hhhapi-model-row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) auto;gap:8px;margin-bottom:8px;align-items:center}
         .hhhapi-wide{grid-column:1/-1}
         .hhhapi-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
         .hhhapi-muted{color:#aaa}
         .hhhapi-status{margin-top:10px;min-height:18px;color:#a8d59d}
+        .hhhapi-list{border:1px solid #444;border-radius:6px;overflow:hidden;background:#222}
+        .hhhapi-item{padding:9px 10px;border-bottom:1px solid #3a3a3a;cursor:pointer}
+        .hhhapi-item:hover,.hhhapi-item.active{background:#3a4b59}
     `;
     document.head.appendChild(style);
 }
 
 function createModelRow(model = "") {
-    const input = el("input", { value: model, placeholder: "模型名" });
+    const actualName = typeof model === "string" ? model : (model.name || model.id || "");
+    const displayName = typeof model === "string" ? model : (model.label || model.name || model.id || "");
+    const realNameInput = el("input", { value: actualName, placeholder: "真实模型名" });
+    const labelInput = el("input", { value: displayName, placeholder: "显示标签" });
     const del = el("button", { class: "hhhapi-btn", text: "删除" });
-    const row = el("div", { class: "hhhapi-model-row" }, [input, del]);
+    const row = el("div", { class: "hhhapi-model-row" }, [realNameInput, labelInput, del]);
     del.onclick = () => row.remove();
     return row;
 }
@@ -67,6 +73,9 @@ async function openManager() {
     const backdrop = el("div", { class: "hhhapi-modal-backdrop" });
     const modal = el("div", { class: "hhhapi-modal" });
     const status = el("div", { class: "hhhapi-status" });
+    const providerList = el("div", { class: "hhhapi-list" });
+    const providerId = el("input", { autocomplete: "off", spellcheck: "false" });
+    const providerName = el("input", { autocomplete: "off", spellcheck: "false" });
 
     const baseUrl = el("input", { autocomplete: "off", spellcheck: "false", inputmode: "url" });
     const timeout = el("input", { type: "number", value: "120", min: "1", max: "3600", step: "1" });
@@ -74,6 +83,7 @@ async function openManager() {
 
     const gptModelsBox = el("div");
     const nanoModelsBox = el("div");
+    let currentProviderId = "";
 
     function setStatus(text, isError = false) {
         status.textContent = text;
@@ -88,30 +98,59 @@ async function openManager() {
     }
 
     function readModels(box) {
-        return Array.from(box.querySelectorAll(".hhhapi-model-row input"))
-            .map(input => input.value.trim())
+        return Array.from(box.querySelectorAll(".hhhapi-model-row"))
+            .map(row => {
+                const inputs = row.querySelectorAll("input");
+                const realName = inputs?.[0]?.value?.trim() || "";
+                const label = inputs?.[1]?.value?.trim() || "";
+                if (!realName) return null;
+                return {
+                    name: realName,
+                    label: label || realName,
+                };
+            })
             .filter(Boolean);
     }
 
-    function fill(config, hasKey = false) {
-        const platform = config?.platform || {};
-        const families = platform.families || {};
-        baseUrl.value = platform.base_url || "https://api.bltcy.ai/v1";
-        timeout.value = String(platform.timeout || 120);
+    function fill(provider, hasKey = false) {
+        currentProviderId = provider?.id || "";
+        const families = provider?.families || {};
+        providerId.value = provider?.id || "";
+        providerName.value = provider?.name || "";
+        baseUrl.value = provider?.base_url || "https://api.bltcy.ai/v1";
+        timeout.value = String(provider?.timeout || 120);
         apiKey.value = "";
         apiKey.placeholder = hasKey ? "已保存密钥，留空不修改" : "请输入 API Key";
         fillModelRows(gptModelsBox, families.gpt?.models || []);
         fillModelRows(nanoModelsBox, families.nano?.models || []);
     }
 
-    async function loadConfig() {
+    async function loadConfig(selectId = "") {
         const result = await fetchJson(`${API_BASE}/config`);
-        fill(result.config, result.has_api_key);
+        const config = result.config || {};
+        const providers = config.providers || [];
+        providerList.innerHTML = "";
+        for (const provider of providers) {
+            const item = el("div", { class: "hhhapi-item", text: `${provider.name || provider.id} (${provider.id})` });
+            item.onclick = async () => {
+                Array.from(providerList.children).forEach(x => x.classList.remove("active"));
+                item.classList.add("active");
+                const detail = await fetchJson(`${API_BASE}/provider_detail?provider_id=${encodeURIComponent(provider.id)}`);
+                fill(detail.provider, detail.has_api_key);
+            };
+            providerList.appendChild(item);
+            if (provider.id === selectId) setTimeout(() => item.click(), 0);
+        }
+        if (!selectId && providerList.firstChild) providerList.firstChild.click();
     }
 
     async function saveConfig() {
+        const pid = providerId.value.trim();
+        if (!pid) return setStatus("服务商ID不能为空", true);
         const payload = {
-            platform: {
+            provider: {
+                id: pid,
+                name: providerName.value.trim() || pid,
                 base_url: baseUrl.value.trim(),
                 timeout: Number(timeout.value || 120),
                 families: {
@@ -120,17 +159,26 @@ async function openManager() {
                 },
             },
         };
-        if (!payload.platform.families.gpt.models.length) return setStatus("GPT 模型至少需要一个", true);
-        if (!payload.platform.families.nano.models.length) return setStatus("Nano 模型至少需要一个", true);
+        if (!payload.provider.families.gpt.models.length) return setStatus("GPT 模型至少需要一个", true);
+        if (!payload.provider.families.nano.models.length) return setStatus("Nano 模型至少需要一个", true);
         await fetchJson(`${API_BASE}/save_config?data=${encodeURIComponent(JSON.stringify(payload))}`);
         if (apiKey.value.trim()) {
-            await fetchJson(`${API_BASE}/provider_secret?api_key=${encodeURIComponent(apiKey.value.trim())}`);
+            await fetchJson(`${API_BASE}/provider_secret?provider_id=${encodeURIComponent(pid)}&api_key=${encodeURIComponent(apiKey.value.trim())}`);
             apiKey.value = "";
             apiKey.placeholder = "已保存密钥，留空不修改";
         }
         setStatus("已保存柏拉图图片配置");
-        await loadConfig();
+        await loadConfig(pid);
     }
+
+    const newProvider = el("button", { class: "hhhapi-btn", text: "新建服务商" });
+    newProvider.onclick = () => fill({
+        id: "",
+        name: "",
+        base_url: "https://api.bltcy.ai/v1",
+        timeout: 120,
+        families: { gpt: { models: [] }, nano: { models: [] } },
+    }, false);
 
     const addGptModel = el("button", { class: "hhhapi-btn", text: "新增 GPT 模型" });
     addGptModel.onclick = () => gptModelsBox.appendChild(createModelRow(""));
@@ -148,31 +196,37 @@ async function openManager() {
     modal.querySelector(".hhhapi-close").onclick = () => backdrop.remove();
 
     modal.appendChild(el("div", { class: "hhhapi-body" }, [
-        el("div", { class: "hhhapi-panel" }, [
-            el("div", { class: "hhhapi-panel-title", text: "基础配置" }),
-            el("div", { class: "hhhapi-form" }, [
-                field("接口地址", baseUrl),
-                field("超时秒数", timeout),
-                field("API密钥", apiKey),
-                el("div"),
+        el("div", {}, [
+            providerList,
+            el("div", { class: "hhhapi-actions" }, [newProvider]),
+        ]),
+        el("div", { class: "hhhapi-form" }, [
+            field("服务商ID", providerId),
+            field("显示名称", providerName),
+            field("接口地址", baseUrl),
+            field("超时秒数", timeout),
+            field("API密钥", apiKey),
+            el("div"),
+            el("div", { class: "hhhapi-panel hhhapi-wide" }, [
+                el("div", { class: "hhhapi-panel-title", text: "GPT 模型列表" }),
+                gptModelsBox,
+                el("div", { class: "hhhapi-actions" }, [addGptModel]),
             ]),
-            el("div", { class: "hhhapi-muted", text: "节点中不会暴露 API Key，统一从这里维护。" }),
-        ]),
-        el("div", { class: "hhhapi-panel" }, [
-            el("div", { class: "hhhapi-panel-title", text: "GPT 模型列表" }),
-            gptModelsBox,
-            el("div", { class: "hhhapi-actions" }, [addGptModel]),
-        ]),
-        el("div", { class: "hhhapi-panel" }, [
-            el("div", { class: "hhhapi-panel-title", text: "Nano 模型列表" }),
-            nanoModelsBox,
-            el("div", { class: "hhhapi-actions" }, [addNanoModel]),
-        ]),
-        el("div", { class: "hhhapi-panel" }, [
-            el("div", { class: "hhhapi-panel-title", text: "保存" }),
-            el("div", { class: "hhhapi-muted", text: "这里保存的是柏拉图图片平台配置，不会影响现有文本服务商。" }),
-            el("div", { class: "hhhapi-actions" }, [save]),
-            status,
+            el("div", { class: "hhhapi-panel hhhapi-wide" }, [
+                el("div", { class: "hhhapi-panel-title", text: "Nano 模型列表" }),
+                nanoModelsBox,
+                el("div", { class: "hhhapi-actions" }, [addNanoModel]),
+            ]),
+            el("div", { class: "hhhapi-panel hhhapi-wide" }, [
+                el("div", { class: "hhhapi-panel-title", text: "保存" }),
+                el("div", { class: "hhhapi-muted", text: "这里保存的是图片服务商配置，支持多服务商与模型标签映射。" }),
+                el("div", { class: "hhhapi-actions" }, [save]),
+                status,
+            ]),
+            el("div", { class: "hhhapi-panel hhhapi-wide" }, [
+                el("div", { class: "hhhapi-panel-title", text: "说明" }),
+                el("div", { class: "hhhapi-muted", text: "节点中不会暴露 API Key，统一从这里维护。" }),
+            ]),
         ]),
     ]));
 

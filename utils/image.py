@@ -1,4 +1,5 @@
 import base64
+import time
 from io import BytesIO
 
 import numpy as np
@@ -51,14 +52,36 @@ def image_tensor_to_data_url(image):
 def decode_image_item(item):
     if item.get("b64_json"):
         raw = base64.b64decode(item["b64_json"])
-        return Image.open(BytesIO(raw)).convert("RGB"), ""
+        return Image.open(BytesIO(raw)).convert("RGB"), "", {
+            "source": "b64_json",
+            "download_seconds": 0.0,
+            "decode_seconds": 0.0,
+            "total_seconds": 0.0,
+            "url": "",
+        }
     url = item.get("url") or item.get("image_url") or item.get("download_url")
     if url:
         import requests
+        start = time.perf_counter()
         resp = requests.get(url, timeout=90)
         resp.raise_for_status()
-        return Image.open(BytesIO(resp.content)).convert("RGB"), url
-    return None, ""
+        after_download = time.perf_counter()
+        image = Image.open(BytesIO(resp.content)).convert("RGB")
+        after_decode = time.perf_counter()
+        return image, url, {
+            "source": "url",
+            "download_seconds": round(after_download - start, 4),
+            "decode_seconds": round(after_decode - after_download, 4),
+            "total_seconds": round(after_decode - start, 4),
+            "url": url,
+        }
+    return None, "", {
+        "source": "empty",
+        "download_seconds": 0.0,
+        "decode_seconds": 0.0,
+        "total_seconds": 0.0,
+        "url": "",
+    }
 
 
 def concat_grid(images):
@@ -72,4 +95,3 @@ def concat_grid(images):
         canvas.paste(img.convert("RGB"), (x, 0))
         x += img.width
     return canvas
-

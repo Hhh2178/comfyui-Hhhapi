@@ -2,7 +2,7 @@ from .nodes_provider import HhhapiProviderManager
 from .nodes_text import HhhapiText
 from .nodes_bltcy_image_manager import HhhapiBltcyImageManager
 from .nodes_bltcy_gpt_image import HhhapiBltcyGPTImage
-from .nodes_bltcy_nano_image import HhhapiBltcyNanoImage
+from .nodes_bltcy_nano_image import HhhapiBltcyNanoImage, HhhapiBltcyNanoAsyncTasks
 
 try:
     from .routes import register_routes
@@ -17,6 +17,7 @@ NODE_CLASS_MAPPINGS = {
     "HhhapiBltcyImageManager": HhhapiBltcyImageManager,
     "HhhapiBltcyGPTImage": HhhapiBltcyGPTImage,
     "HhhapiBltcyNanoImage": HhhapiBltcyNanoImage,
+    "HhhapiBltcyNanoAsyncTasks": HhhapiBltcyNanoAsyncTasks,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -25,6 +26,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HhhapiBltcyImageManager": "Hhh 柏拉图图片API管理",
     "HhhapiBltcyGPTImage": "Hhh 柏拉图 GPT-Image",
     "HhhapiBltcyNanoImage": "Hhh 柏拉图 Nano",
+    "HhhapiBltcyNanoAsyncTasks": "Hhh 柏拉图 Nano 异步任务",
 }
 
 WEB_DIRECTORY = "./js"

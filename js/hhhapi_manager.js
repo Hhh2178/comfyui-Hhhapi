@@ -49,7 +49,7 @@ function cssOnce() {
         .hhhapi-field input,.hhhapi-field textarea{background:#191919;color:#eee;border:1px solid #555;border-radius:5px;padding:7px}
         .hhhapi-wide{grid-column:1/-1}
         .hhhapi-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-        .hhhapi-model-row{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:8px;margin-bottom:8px;align-items:start}
+        .hhhapi-model-row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) auto;gap:8px;margin-bottom:8px;align-items:start}
         .hhhapi-model-meta{display:flex;flex-direction:column;gap:8px}
         .hhhapi-model-caps{display:flex;gap:10px;flex-wrap:wrap}
         .hhhapi-check{display:flex;align-items:center;gap:6px;color:#bbb}
@@ -67,7 +67,8 @@ function capabilityCheckbox(label, cls, checked = false) {
 }
 
 function createModelRow(model = {}) {
-    const nameInput = el("input", { value: model.name || model.id || "", placeholder: "模型名" });
+    const realNameInput = el("input", { value: model.name || model.id || "", placeholder: "真实模型名" });
+    const labelInput = el("input", { value: model.label || model.name || model.id || "", placeholder: "显示标签" });
     const caps = new Set(model.capabilities || []);
     const vision = capabilityCheckbox("视觉", "cap-vision", caps.has("vision_input"));
     const json = capabilityCheckbox("JSON", "cap-json", caps.has("json_object"));
@@ -81,7 +82,8 @@ function createModelRow(model = {}) {
     const del = el("button", { class: "hhhapi-btn hhhapi-danger", text: "删除" });
     del.onclick = () => row.remove();
     const meta = el("div", { class: "hhhapi-model-meta" }, [
-        nameInput,
+        realNameInput,
+        labelInput,
         el("div", { class: "hhhapi-model-caps" }, [vision, json, reasoning, minimaxVision]),
     ]);
     const row = el("div", { class: "hhhapi-model-row" }, [meta, del]);
@@ -121,8 +123,10 @@ async function openManager() {
     function readModels() {
         return Array.from(modelsBox.querySelectorAll(".hhhapi-model-row"))
             .map(row => {
-                const name = row.querySelector(".hhhapi-model-meta > input")?.value?.trim() || "";
-                if (!name) return null;
+                const inputs = row.querySelectorAll(".hhhapi-model-meta > input");
+                const realName = inputs?.[0]?.value?.trim() || "";
+                const label = inputs?.[1]?.value?.trim() || "";
+                if (!realName) return null;
                 const capabilities = ["text"];
                 if (row.querySelector(".cap-vision input")?.checked) capabilities.push("vision_input");
                 if (row.querySelector(".cap-json input")?.checked) capabilities.push("json_object");
@@ -132,12 +136,13 @@ async function openManager() {
                     if (!capabilities.includes("vision_input")) capabilities.push("vision_input");
                 }
                 return {
-                id: name,
-                name,
-                task_types: ["text"],
-                profile_id: "openai_chat",
-                capabilities,
-            };
+                    id: realName,
+                    name: realName,
+                    label: label || realName,
+                    task_types: ["text"],
+                    profile_id: "openai_chat",
+                    capabilities,
+                };
             })
             .filter(Boolean);
     }

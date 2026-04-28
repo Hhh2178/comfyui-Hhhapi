@@ -55,7 +55,7 @@ def register_routes():
         return {
             "ok": True,
             "config": image_provider_store.load_config(),
-            "has_api_key": provider_has_api_key(image_provider_store.IMAGE_PROVIDER_ID),
+            "provider_ids": image_provider_store.provider_ids(),
         }
 
     @routes.get("/hhhapi/providers")
@@ -371,7 +371,21 @@ def register_routes():
     async def image_panel_models(request):
         try:
             family = request.rel_url.query.get("family", "gpt")
-            return ok({"ok": True, "models": image_provider_store.model_names(family)})
+            provider_id = request.rel_url.query.get("provider_id", "")
+            return ok({"ok": True, "models": image_provider_store.model_names(family, provider_id or None)})
+        except Exception as exc:
+            return error_response(exc)
+
+    @routes.get("/hhhapi/image/panel/provider_detail")
+    async def image_panel_provider_detail(request):
+        try:
+            provider_id = request.rel_url.query.get("provider_id", "")
+            provider = image_provider_store.get_provider(provider_id)
+            return ok({
+                "ok": True,
+                "provider": provider,
+                "has_api_key": provider_has_api_key(provider.get("id", image_provider_store.IMAGE_PROVIDER_ID)),
+            })
         except Exception as exc:
             return error_response(exc)
 
@@ -380,22 +394,25 @@ def register_routes():
         try:
             raw = request.rel_url.query.get("data", "")
             data = json.loads(raw) if raw else {}
-            platform = data.get("platform", {})
-            saved = image_provider_store.update_platform(
-                base_url=platform.get("base_url", ""),
-                timeout=platform.get("timeout", 120),
-                gpt_models=platform.get("families", {}).get("gpt", {}).get("models", []),
-                nano_models=platform.get("families", {}).get("nano", {}).get("models", []),
+            provider = data.get("provider", {})
+            saved = image_provider_store.update_provider(
+                provider_id=provider.get("id", ""),
+                name=provider.get("name", ""),
+                base_url=provider.get("base_url", ""),
+                timeout=provider.get("timeout", 120),
+                gpt_models=provider.get("families", {}).get("gpt", {}).get("models", []),
+                nano_models=provider.get("families", {}).get("nano", {}).get("models", []),
             )
-            return ok({"ok": True, "platform": saved})
+            return ok({"ok": True, "provider": saved})
         except Exception as exc:
             return error_response(exc)
 
     @routes.get("/hhhapi/image/panel/provider_secret")
     async def image_panel_provider_secret(request):
         try:
+            provider_id = request.rel_url.query.get("provider_id", "") or image_provider_store.IMAGE_PROVIDER_ID
             api_key = request.rel_url.query.get("api_key", "")
-            save_provider_api_key(image_provider_store.IMAGE_PROVIDER_ID, api_key)
+            save_provider_api_key(provider_id, api_key)
             return ok({"ok": True})
         except Exception as exc:
             return error_response(exc)
@@ -411,6 +428,7 @@ def register_routes():
     async def image_v1_models(request):
         try:
             family = request.rel_url.query.get("family", "gpt")
-            return ok(image_provider_store.model_names(family))
+            provider_id = request.rel_url.query.get("provider_id", "")
+            return ok(image_provider_store.model_names(family, provider_id or None))
         except Exception as exc:
             return error_response(exc)

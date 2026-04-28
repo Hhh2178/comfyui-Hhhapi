@@ -19,6 +19,6 @@ def error_payload(code, message, config=None, raw=None):
         "message": message,
         "provider_id": config.get("provider_id", ""),
         "model": config.get("model", ""),
+        "model_label": config.get("model_label", config.get("requested_model", config.get("model", ""))),
         "raw": raw or {},
     }
-
